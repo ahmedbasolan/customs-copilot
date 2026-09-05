@@ -229,3 +229,76 @@ if st.session_state.extracted:
     for r in results:
         icon = "✅" if r.passed else ("🔴" if r.severity == "block" else "🟡")
         st.markdown(f"{icon} **{r.field}:** {r.message}")
+
+    st.markdown("---")
+    st.subheader("📤 Export")
+
+    export_data = {
+        "consignee_name": merged.consignee_name,
+        "consignee_trn": merged.consignee_trn,
+        "shipper_name": merged.shipper_name,
+        "shipper_country": merged.shipper_country,
+        "container_numbers": merged.container_numbers,
+        "gross_weight": merged.gross_weight,
+        "net_weight": merged.net_weight,
+        "invoice_value": merged.invoice_value,
+        "invoice_currency": merged.invoice_currency,
+        "hs_codes": merged.hs_codes,
+        "country_of_origin": merged.country_of_origin,
+        "port_of_loading": merged.port_of_loading,
+        "port_of_discharge": merged.port_of_discharge,
+        "goods_description": merged.goods_description,
+        "package_count": merged.package_count,
+        "marks_and_numbers": merged.marks_and_numbers,
+        "validation": [
+            {"field": r.field, "severity": r.severity, "message": r.message, "passed": r.passed}
+            for r in results
+        ],
+    }
+
+    import json
+
+    json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+    st.download_button(
+        label="📥 Download JSON",
+        data=json_str,
+        file_name="customs_declaration.json",
+        mime="application/json",
+    )
+
+    st.markdown("---")
+    st.subheader("📊 Declaration Form Preview")
+
+    def _status_color(field_name: str) -> str:
+        for r in results:
+            if r.field == field_name and not r.passed:
+                return "#ffcccc" if r.severity == "block" else "#fff3cd"
+        return "#d4edda"
+
+    fields = [
+        ("Consignee Name", merged.consignee_name, "consignee_name"),
+        ("Consignee TRN", merged.consignee_trn, "trn"),
+        ("Shipper Name", merged.shipper_name, None),
+        ("Shipper Country", merged.shipper_country, None),
+        ("Container Number(s)", ", ".join(merged.container_numbers) if merged.container_numbers else None, "container_number"),
+        ("Gross Weight (KGS)", f"{merged.gross_weight:,.2f}" if merged.gross_weight else None, "gross_weight"),
+        ("Net Weight (KGS)", f"{merged.net_weight:,.2f}" if merged.net_weight else None, "net_weight"),
+        ("Invoice Value", f"{merged.invoice_currency} {merged.invoice_value:,.2f}" if merged.invoice_value else None, "invoice_value"),
+        ("HS Code(s)", ", ".join(merged.hs_codes) if merged.hs_codes else None, "hs_code"),
+        ("Country of Origin", merged.country_of_origin, "country_of_origin"),
+        ("Port of Loading", merged.port_of_loading, None),
+        ("Port of Discharge", merged.port_of_discharge, None),
+        ("Goods Description", merged.goods_description, None),
+        ("Package Count", merged.package_count, None),
+        ("Marks & Numbers", merged.marks_and_numbers, None),
+    ]
+
+    html = '<table style="width:100%; border-collapse: collapse;">'
+    html += '<tr style="background-color: #f8f9fa;"><th style="text-align:left; padding:8px; border:1px solid #ddd;">Field</th><th style="text-align:left; padding:8px; border:1px solid #ddd;">Value</th></tr>'
+    for label, value, field_name in fields:
+        bg = _status_color(field_name) if field_name else "#ffffff"
+        display = value if value else "—"
+        html += f'<tr style="background-color: {bg};"><td style="padding:8px; border:1px solid #ddd; font-weight:bold;">{label}</td><td style="padding:8px; border:1px solid #ddd;">{display}</td></tr>'
+    html += "</table>"
+
+    st.markdown(html, unsafe_allow_html=True)
