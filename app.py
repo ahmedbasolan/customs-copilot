@@ -119,12 +119,34 @@ with st.sidebar:
     )
 
     provider_info = PROVIDERS[provider]
-    model = st.selectbox(
+
+    if "custom_model" not in st.session_state:
+        st.session_state.custom_model = provider_info["default_model"]
+    if "current_provider" not in st.session_state:
+        st.session_state.current_provider = provider
+    if st.session_state.current_provider != provider:
+        st.session_state.custom_model = provider_info["default_model"]
+        st.session_state.current_provider = provider
+
+    model = st.text_input(
         "Model",
-        options=provider_info["models"],
-        index=provider_info["models"].index(provider_info["default_model"]),
-        key="model",
+        value=st.session_state.custom_model,
+        key="custom_model",
+        placeholder="Type any model name",
+        help="Enter any model — the presets below are suggestions.",
     )
+
+    st.markdown(
+        f'<div style="margin-top:-0.5rem; margin-bottom:0.5rem;">'
+        f'<span style="font-size:0.75rem; color:#64748b;">Quick pick:</span></div>',
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(len(provider_info["models"]))
+    for i, m in enumerate(provider_info["models"]):
+        with cols[i]:
+            if st.button(m, key=f"preset_{m}", use_container_width=True):
+                st.session_state.custom_model = m
+                st.rerun()
 
     base_url = None
     if provider_info["needs_base_url"]:
