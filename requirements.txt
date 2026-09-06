@@ -5,3 +5,4 @@ google-generativeai
 httpx
 pydantic
 fpdf2
+pymupdf
