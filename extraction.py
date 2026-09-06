@@ -258,5 +258,11 @@ def extract_from_image(
     raw_text = re.sub(r"\n?```", "", raw_text)
     raw_text = raw_text.strip()
 
-    raw = json.loads(raw_text)
+    try:
+        raw = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Model returned invalid JSON. Response preview: {raw_text[:200]}..."
+        ) from e
+
     return parse_extraction_response(raw)
