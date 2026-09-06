@@ -235,7 +235,7 @@ st.markdown("""
 current_step = 1
 if api_key:
     current_step = 2
-if st.session_state.get("extracted"):
+if st.session_state.get("extracted") and len(st.session_state["extracted"]) > 0:
     current_step = 3
 
 st.markdown(f"""
@@ -352,13 +352,14 @@ with col_btn:
 
 if extract_clicked:
     st.session_state.extracted = {}
-    status_container = st.container()
+    status_text = st.empty()
     progress = st.progress(0)
+    results_area = st.container()
 
     for i, file in enumerate(uploaded_files):
         file_key = f"{file.name}_{i}"
-        progress.progress(i / len(uploaded_files))
-        status_container.markdown(f"**Processing:** {file.name}")
+        progress.progress((i + 0.5) / len(uploaded_files))
+        status_text.markdown(f"**Processing:** `{file.name}` ({i+1}/{len(uploaded_files)})")
 
         raw_bytes = file.read()
         file.seek(0)
@@ -373,33 +374,34 @@ if extract_clicked:
                 "doc_type": st.session_state.doc_types[file_key],
                 "result": result,
             }
-            status_container.success(f"✓ {file.name}")
+            results_area.success(f"✓ `{file.name}` — extracted successfully")
         except Exception as e:
-            status_container.error(f"✗ {file.name}: {e}")
+            results_area.error(f"✗ `{file.name}` — {e}")
 
     progress.progress(1.0)
+    status_text.markdown("**Done!** All documents processed.")
     st.rerun()
 
 if st.session_state.extracted:
     merged = ExtractionResult()
     for file_key, data in st.session_state.extracted.items():
         r = data["result"]
-        if r.consignee_name: merged.consignee_name = r.consignee_name
-        if r.consignee_trn: merged.consignee_trn = r.consignee_trn
-        if r.shipper_name: merged.shipper_name = r.shipper_name
-        if r.shipper_country: merged.shipper_country = r.shipper_country
+        if not merged.consignee_name and r.consignee_name: merged.consignee_name = r.consignee_name
+        if not merged.consignee_trn and r.consignee_trn: merged.consignee_trn = r.consignee_trn
+        if not merged.shipper_name and r.shipper_name: merged.shipper_name = r.shipper_name
+        if not merged.shipper_country and r.shipper_country: merged.shipper_country = r.shipper_country
         if r.container_numbers: merged.container_numbers = list(set(merged.container_numbers + r.container_numbers))
-        if r.gross_weight is not None: merged.gross_weight = r.gross_weight
-        if r.net_weight is not None: merged.net_weight = r.net_weight
-        if r.invoice_value is not None: merged.invoice_value = r.invoice_value
-        if r.invoice_currency: merged.invoice_currency = r.invoice_currency
+        if merged.gross_weight is None and r.gross_weight is not None: merged.gross_weight = r.gross_weight
+        if merged.net_weight is None and r.net_weight is not None: merged.net_weight = r.net_weight
+        if merged.invoice_value is None and r.invoice_value is not None: merged.invoice_value = r.invoice_value
+        if not merged.invoice_currency and r.invoice_currency: merged.invoice_currency = r.invoice_currency
         if r.hs_codes: merged.hs_codes = list(set(merged.hs_codes + r.hs_codes))
-        if r.country_of_origin: merged.country_of_origin = r.country_of_origin
-        if r.port_of_loading: merged.port_of_loading = r.port_of_loading
-        if r.port_of_discharge: merged.port_of_discharge = r.port_of_discharge
-        if r.goods_description: merged.goods_description = r.goods_description
-        if r.package_count: merged.package_count = r.package_count
-        if r.marks_and_numbers: merged.marks_and_numbers = r.marks_and_numbers
+        if not merged.country_of_origin and r.country_of_origin: merged.country_of_origin = r.country_of_origin
+        if not merged.port_of_loading and r.port_of_loading: merged.port_of_loading = r.port_of_loading
+        if not merged.port_of_discharge and r.port_of_discharge: merged.port_of_discharge = r.port_of_discharge
+        if not merged.goods_description and r.goods_description: merged.goods_description = r.goods_description
+        if not merged.package_count and r.package_count: merged.package_count = r.package_count
+        if not merged.marks_and_numbers and r.marks_and_numbers: merged.marks_and_numbers = r.marks_and_numbers
 
     validation_data = {
         "hs_code": merged.hs_codes[0] if merged.hs_codes else None,
@@ -446,22 +448,27 @@ if st.session_state.extracted:
     """, unsafe_allow_html=True)
 
     def _get_field_class(field_name, value, results):
-        if value is None: return "missing"
+        if value is None or value == "":
+            return "missing"
         for r in results:
             if r.field == field_name and not r.passed:
                 return "error" if r.severity == "block" else "warn"
         return ""
 
     def _render_field(label, value, field_name, results, key=None):
+        import html as html_mod
         cls = _get_field_class(field_name, value, results)
-        display = value if value is not None else "Not extracted"
-        value_cls = "missing" if value is None else ""
-        copy_id = key or field_name or label.lower().replace(" ", "_")
+        is_missing = value is None or value == ""
+        display = "Not extracted" if is_missing else value
+        value_cls = "missing" if is_missing else ""
+        escaped = html_mod.escape(str(display))
+        uid = key or field_name or label.lower().replace(" ", "_")
         st.markdown(f"""
         <div class="field-card {cls}">
             <div class="field-label">{label}</div>
-            <div class="field-value {value_cls}">{display}</div>
-            <button class="copy-btn" onclick="navigator.clipboard.writeText('{display.replace("'", "\\'")}'); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',1000)">Copy</button>
+            <div class="field-value {value_cls}">{escaped}</div>
+            <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('fv-{uid}').textContent); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy',1000)">Copy</button>
+            <span id="fv-{uid}" style="display:none">{escaped}</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -484,13 +491,13 @@ if st.session_state.extracted:
 
         with c2:
             st.markdown('<div class="section-header">Weight</div>', unsafe_allow_html=True)
-            gw = f"{merged.gross_weight:,.2f} KGS" if merged.gross_weight else None
-            nw = f"{merged.net_weight:,.2f} KGS" if merged.net_weight else None
+            gw = f"{merged.gross_weight:,.2f} KGS" if merged.gross_weight is not None else None
+            nw = f"{merged.net_weight:,.2f} KGS" if merged.net_weight is not None else None
             _render_field("Gross Weight", gw, "gross_weight", results)
             _render_field("Net Weight", nw, "net_weight", results)
 
             st.markdown('<div class="section-header">Invoice</div>', unsafe_allow_html=True)
-            inv = f"{merged.invoice_currency} {merged.invoice_value:,.2f}" if merged.invoice_value else None
+            inv = f"{merged.invoice_currency} {merged.invoice_value:,.2f}" if merged.invoice_value is not None else None
             hs = ", ".join(merged.hs_codes) if merged.hs_codes else None
             _render_field("Value", inv, "invoice_value", results)
             _render_field("HS Code(s)", hs, "hs_code", results)
