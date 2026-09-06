@@ -1,9 +1,8 @@
+import base64
 import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
-
-from openai import OpenAI
 
 
 EXTRACTION_PROMPT = """You are a customs document extraction assistant. Extract the following fields from the shipping document image.
@@ -58,6 +57,35 @@ class ExtractionResult:
     marks_and_numbers: Optional[str] = None
 
 
+PROVIDERS = {
+    "openai": {
+        "name": "OpenAI",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        "default_model": "gpt-4o",
+        "needs_base_url": False,
+    },
+    "anthropic": {
+        "name": "Anthropic",
+        "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20251022", "claude-3-opus-20240229"],
+        "default_model": "claude-sonnet-4-20250514",
+        "needs_base_url": False,
+    },
+    "google": {
+        "name": "Google Gemini",
+        "models": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+        "default_model": "gemini-2.0-flash",
+        "needs_base_url": False,
+    },
+    "ollama": {
+        "name": "Ollama (Local)",
+        "models": ["llava", "llava:13b", "bakllava", "moondream"],
+        "default_model": "llava",
+        "needs_base_url": True,
+        "default_base_url": "http://localhost:11434",
+    },
+}
+
+
 def _parse_number(value: Any) -> Optional[float]:
     if value is None:
         return None
@@ -103,13 +131,14 @@ def parse_extraction_response(raw: dict) -> ExtractionResult:
     )
 
 
-def extract_from_image(api_key: str, image_bytes: bytes) -> ExtractionResult:
-    client = OpenAI(api_key=api_key)
+def _extract_openai(api_key: str, model: str, image_bytes: bytes, base_url: Optional[str] = None) -> str:
+    from openai import OpenAI
 
-    base64_image = __import__("base64").b64encode(image_bytes).decode("utf-8")
+    client = OpenAI(api_key=api_key)
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model=model,
         messages=[
             {
                 "role": "user",
@@ -118,7 +147,7 @@ def extract_from_image(api_key: str, image_bytes: bytes) -> ExtractionResult:
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/png;base64,{base64_image}",
+                            "url": f"data:image/png;base64,{b64}",
                             "detail": "high",
                         },
                     },
@@ -128,12 +157,106 @@ def extract_from_image(api_key: str, image_bytes: bytes) -> ExtractionResult:
         max_tokens=2000,
         temperature=0,
     )
+    return response.choices[0].message.content.strip()
 
-    content = response.choices[0].message.content.strip()
 
-    content = re.sub(r"```json\n?", "", content)
-    content = re.sub(r"\n?```", "", content)
-    content = content.strip()
+def _extract_anthropic(api_key: str, model: str, image_bytes: bytes, base_url: Optional[str] = None) -> str:
+    import anthropic
 
-    raw = json.loads(content)
+    client = anthropic.Anthropic(api_key=api_key)
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=2000,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": b64,
+                        },
+                    },
+                    {"type": "text", "text": EXTRACTION_PROMPT},
+                ],
+            }
+        ],
+    )
+    return response.content[0].text.strip()
+
+
+def _extract_google(api_key: str, model: str, image_bytes: bytes, base_url: Optional[str] = None) -> str:
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    model_instance = genai.GenerativeModel(model)
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    response = model_instance.generate_content(
+        [
+            EXTRACTION_PROMPT,
+            {"mime_type": "image/png", "data": b64},
+        ],
+        generation_config=genai.GenerationConfig(
+            max_output_tokens=2000,
+            temperature=0,
+        ),
+    )
+    return response.text.strip()
+
+
+def _extract_ollama(api_key: str, model: str, image_bytes: bytes, base_url: str = "http://localhost:11434") -> str:
+    import httpx
+
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    response = httpx.post(
+        f"{base_url}/api/chat",
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": EXTRACTION_PROMPT,
+                    "images": [b64],
+                }
+            ],
+            "stream": False,
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()["message"]["content"].strip()
+
+
+EXTRACTORS = {
+    "openai": _extract_openai,
+    "anthropic": _extract_anthropic,
+    "google": _extract_google,
+    "ollama": _extract_ollama,
+}
+
+
+def extract_from_image(
+    provider: str,
+    api_key: str,
+    model: str,
+    image_bytes: bytes,
+    base_url: Optional[str] = None,
+) -> ExtractionResult:
+    if provider not in EXTRACTORS:
+        raise ValueError(f"Unknown provider: {provider}")
+
+    extractor = EXTRACTORS[provider]
+    raw_text = extractor(api_key, model, image_bytes, base_url)
+
+    raw_text = re.sub(r"```json\n?", "", raw_text)
+    raw_text = re.sub(r"\n?```", "", raw_text)
+    raw_text = raw_text.strip()
+
+    raw = json.loads(raw_text)
     return parse_extraction_response(raw)
