@@ -48,6 +48,28 @@ PACKING_LIST_KEYWORDS = [
 CONFIDENCE_THRESHOLD = 0.15
 
 
+def _extract_text_from_pdf(raw_bytes: bytes) -> str:
+    try:
+        import pymupdf
+        doc = pymupdf.open(stream=raw_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except Exception:
+        return ""
+
+
+def _extract_text(raw_bytes: bytes) -> str:
+    if raw_bytes[:4] == b"%PDF":
+        return _extract_text_from_pdf(raw_bytes)
+    try:
+        return raw_bytes[:8000].decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
 def _count_matches(text: str, keywords: list[str]) -> int:
     text_lower = text.lower()
     count = 0
@@ -57,11 +79,11 @@ def _count_matches(text: str, keywords: list[str]) -> int:
     return count
 
 
-def detect_document_type(text: str) -> tuple[str, float]:
+def detect_document_type(raw_bytes: bytes) -> tuple[str, float]:
+    text = _extract_text(raw_bytes)
+
     if not text or not text.strip():
         return "unknown", 0.0
-
-    total_keywords = len(BILL_OF_LADING_KEYWORDS) + len(INVOICE_KEYWORDS) + len(PACKING_LIST_KEYWORDS)
 
     bl_matches = _count_matches(text, BILL_OF_LADING_KEYWORDS)
     invoice_matches = _count_matches(text, INVOICE_KEYWORDS)

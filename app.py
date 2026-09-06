@@ -312,11 +312,7 @@ for i, file in enumerate(uploaded_files):
     if file_key not in st.session_state.doc_types:
         raw_bytes = file.read()
         file.seek(0)
-        try:
-            text_chunk = raw_bytes[:4000].decode("utf-8", errors="ignore")
-        except Exception:
-            text_chunk = ""
-        detected_type, _ = detect_document_type(text_chunk)
+        detected_type, _ = detect_document_type(raw_bytes)
         st.session_state.doc_types[file_key] = detected_type
 
     icon = DOC_TYPE_ICONS.get(st.session_state.doc_types[file_key], "📄")
