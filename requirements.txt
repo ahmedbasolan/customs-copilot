@@ -1,4 +1,7 @@
 streamlit
 openai
+anthropic
+google-generativeai
+httpx
 pydantic
 fpdf2
