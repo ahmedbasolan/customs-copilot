@@ -1,7 +1,3 @@
-import re
-from typing import Optional
-
-
 BILL_OF_LADING_KEYWORDS = [
     "bill of lading",
     "b/l number",
@@ -47,27 +43,93 @@ PACKING_LIST_KEYWORDS = [
 
 CONFIDENCE_THRESHOLD = 0.15
 
+PDF_HINT = "Install it with: pip install pymupdf"
 
-def _extract_text_from_pdf(raw_bytes: bytes) -> str:
+
+class PdfTextUnavailable(Exception):
+    """PDF text extraction failed. `reason` is a short machine-readable slug."""
+
+    def __init__(self, reason: str, message: str):
+        self.reason = reason
+        super().__init__(message)
+
+
+def _import_pymupdf():
+    """Import pymupdf, or explain clearly that it is missing.
+
+    Swallowing this import error is what previously made a missing dependency
+    look identical to an unreadable document: auto-detect just returned
+    "unknown" and the coordinator was never told why.
+    """
     try:
         import pymupdf
+    except ImportError as exc:
+        raise PdfTextUnavailable(
+            "missing_dependency",
+            f"PDF support requires the 'pymupdf' package, which is not installed. {PDF_HINT}",
+        ) from exc
+    return pymupdf
+
+
+def pdf_support_available() -> tuple[bool, str]:
+    """Whether PDF auto-detect can run. Returns (ok, message)."""
+    try:
+        _import_pymupdf()
+    except PdfTextUnavailable as exc:
+        return False, str(exc)
+    return True, "pymupdf available"
+
+
+def _extract_text_from_pdf(raw_bytes: bytes) -> str:
+    """Extract embedded text from a PDF.
+
+    Raises PdfTextUnavailable with a distinct reason for each failure mode:
+    missing dependency, unreadable/encrypted file, or a scanned image with no
+    text layer. All three used to return "" and surface as "unknown".
+    """
+    pymupdf = _import_pymupdf()
+
+    try:
         doc = pymupdf.open(stream=raw_bytes, filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
+    except Exception as exc:
+        raise PdfTextUnavailable(
+            "unreadable_pdf",
+            "This file could not be opened as a PDF. It may be corrupt, "
+            "password-protected, or not a real PDF.",
+        ) from exc
+
+    try:
+        if getattr(doc, "needs_pass", False):
+            raise PdfTextUnavailable(
+                "encrypted_pdf",
+                "This PDF is password-protected, so its text cannot be read. "
+                "Remove the password and upload again, or set the document type manually.",
+            )
+        pages = list(doc)
+        text = "".join(page.get_text() for page in pages)
+    except PdfTextUnavailable:
+        raise
+    except Exception as exc:
+        raise PdfTextUnavailable(
+            "unreadable_pdf",
+            "The PDF opened but its text could not be read.",
+        ) from exc
+    finally:
         doc.close()
-        return text
-    except Exception:
-        return ""
+
+    if not text.strip():
+        raise PdfTextUnavailable(
+            "no_text_layer",
+            "This PDF has no embedded text — it is most likely a scan or photo. "
+            "Auto-detect needs a text-based PDF; set the document type manually.",
+        )
+    return text
 
 
 def _extract_text(raw_bytes: bytes) -> str:
     if raw_bytes[:4] == b"%PDF":
         return _extract_text_from_pdf(raw_bytes)
-    try:
-        return raw_bytes[:8000].decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
+    return raw_bytes[:8000].decode("utf-8", errors="ignore")
 
 
 def _count_matches(text: str, keywords: list[str]) -> int:
@@ -80,6 +142,12 @@ def _count_matches(text: str, keywords: list[str]) -> int:
 
 
 def detect_document_type(raw_bytes: bytes) -> tuple[str, float]:
+    """Classify a document as bill_of_lading / invoice / packing_list / unknown.
+
+    Returns ("unknown", 0.0) when the content is readable but does not match
+    any keyword profile. Raises PdfTextUnavailable when a PDF could not be
+    read at all, so the caller can tell the user why.
+    """
     text = _extract_text(raw_bytes)
 
     if not text or not text.strip():
@@ -102,3 +170,20 @@ def detect_document_type(raw_bytes: bytes) -> tuple[str, float]:
         return "unknown", best_score
 
     return best_type, best_score
+
+
+def detect_document_type_safe(raw_bytes: bytes) -> tuple[str, float, str | None]:
+    """Like detect_document_type, but never raises.
+
+    Returns (doc_type, confidence, warning). `warning` is None on success, or
+    a user-facing message explaining why auto-detect could not run.
+    """
+    try:
+        doc_type, confidence = detect_document_type(raw_bytes)
+    except PdfTextUnavailable as exc:
+        return "unknown", 0.0, str(exc)
+    if doc_type == "unknown":
+        return doc_type, confidence, (
+            "Could not identify this document automatically. Set the type manually."
+        )
+    return doc_type, confidence, None

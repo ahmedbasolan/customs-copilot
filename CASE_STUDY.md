@@ -50,9 +50,35 @@ A Streamlit-based copilot that automates extraction and validation:
 
 - **Frontend:** Streamlit (Python)
 - **Extraction:** GPT-4o vision API (single call per document, ~$0.005/doc)
-- **Detection:** Keyword-based document type classifier
+- **Detection:** Keyword-based document type classifier, with PDF text extraction via pymupdf
 - **Validation:** Pure Python rules engine (40 test cases)
 - **Export:** JSON download + HTML table preview
+
+60 automated tests: 40 validation, 15 detection, 5 extraction parsing.
+
+### Auto-detect failure modes
+
+Auto-detect needs a text-based PDF. Each way that can fail is reported
+distinctly rather than collapsing into "unknown", so a coordinator is never
+left guessing why a document was not classified:
+
+| Cause | What the user sees |
+|---|---|
+| `pymupdf` not installed | App-level warning with the install command; manual type selection still works |
+| Corrupt / not really a PDF | Per-file note that the file could not be opened |
+| Password-protected PDF | Per-file note to remove the password |
+| Scanned image with no text layer | Per-file note that auto-detect needs a text-based PDF |
+
+Every one of these previously returned `"unknown"` silently.
+
+## Known Limitations
+
+- Extraction accuracy against GPT-4o has **not** been measured. The 60 tests
+  cover the validation rules and response parsing, not model output quality.
+- The time-saved figures in the table above are projected from the manual
+  baseline, not measured against real declarations.
+- `fpdf2` is a development-only dependency: it regenerates the synthetic
+  documents in `mock_docs/` and is not imported by the app.
 
 ## What's Next
 

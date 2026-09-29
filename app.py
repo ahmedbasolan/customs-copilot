@@ -1,7 +1,7 @@
 import json
 import streamlit as st
 from extraction import extract_from_image, ExtractionResult, PROVIDERS
-from detection import detect_document_type
+from detection import detect_document_type_safe, pdf_support_available
 from validation import validate_all, ValidationResult
 
 st.set_page_config(
@@ -303,6 +303,19 @@ if "extracted" not in st.session_state:
     st.session_state.extracted = {}
 if "doc_types" not in st.session_state:
     st.session_state.doc_types = {}
+if "doc_warnings" not in st.session_state:
+    st.session_state.doc_warnings = {}
+
+# Surface a broken PDF dependency once, instead of letting every PDF silently
+# auto-detect as "unknown" with no explanation.
+_pdf_ok, _pdf_msg = pdf_support_available()
+if not _pdf_ok and any(
+    (f.name or "").lower().endswith(".pdf") for f in uploaded_files
+):
+    st.warning(
+        f"PDF auto-detect is unavailable — {_pdf_msg} "
+        "You can still upload PDFs and set the document type manually."
+    )
 
 st.markdown(f'<div class="section-header">📄 Uploaded Documents <span class="count">{len(uploaded_files)}</span></div>', unsafe_allow_html=True)
 
@@ -312,8 +325,13 @@ for i, file in enumerate(uploaded_files):
     if file_key not in st.session_state.doc_types:
         raw_bytes = file.read()
         file.seek(0)
-        detected_type, _ = detect_document_type(raw_bytes)
+        detected_type, _, warning = detect_document_type_safe(raw_bytes)
         st.session_state.doc_types[file_key] = detected_type
+        st.session_state.doc_warnings[file_key] = warning
+
+    warning = st.session_state.doc_warnings.get(file_key)
+    if warning and st.session_state.doc_types[file_key] == "unknown":
+        st.caption(f"⚠️ {warning}", help=file.name)
 
     icon = DOC_TYPE_ICONS.get(st.session_state.doc_types[file_key], "📄")
     col1, col2 = st.columns([5, 2])

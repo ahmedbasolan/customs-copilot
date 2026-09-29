@@ -1,8 +1,17 @@
-streamlit
-openai
-anthropic
-google-generativeai
-httpx
-pydantic
-fpdf2
-pymupdf
+# Runtime dependencies.
+# pymupdf is required for PDF auto-detect: without it every PDF silently
+# classifies as "unknown". detection.py now raises PdfTextUnavailable with an
+# actionable message and the Streamlit UI shows a warning, but the package
+# still has to be installed. Pinned to a minor range so a breaking upstream
+# release cannot reintroduce the silent failure.
+streamlit>=1.30,<2
+openai>=1.12
+anthropic>=0.34
+google-generativeai>=0.8
+httpx>=0.27
+pydantic>=2.0
+pymupdf>=1.24,<2
+
+# Development only: regenerates the synthetic documents in mock_docs/.
+# Not imported by the app.
+fpdf2>=2.7
