@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from detection import PDF_HINT
+
 
 EXTRACTION_PROMPT = """You are a customs document extraction assistant. Extract the following fields from the shipping document image.
 
@@ -66,7 +68,7 @@ PROVIDERS = {
     },
     "anthropic": {
         "name": "Anthropic",
-        "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20251022", "claude-3-opus-20240229"],
+        "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
         "default_model": "claude-sonnet-4-20250514",
         "needs_base_url": False,
     },
@@ -82,8 +84,97 @@ PROVIDERS = {
         "default_model": "llava",
         "needs_base_url": True,
         "default_base_url": "http://localhost:11434",
+        "needs_api_key": False,
     },
 }
+
+
+MAX_PDF_PAGES = 10
+PDF_RENDER_DPI = 200
+_PDF_MAGIC = b"%PDF"
+_MAGIC_SCAN_BYTES = 1024
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+class DocumentRenderError(ValueError):
+    """The upload could not be turned into image payloads for the model."""
+
+
+def sniff_mime(raw: bytes) -> str:
+    """Identify an upload from its magic bytes rather than its filename."""
+    if _PDF_MAGIC in raw[:_MAGIC_SCAN_BYTES]:
+        return "application/pdf"
+    if raw.startswith(_PNG_MAGIC):
+        return "image/png"
+    if raw.startswith(_JPEG_MAGIC):
+        return "image/jpeg"
+    return "application/octet-stream"
+
+
+def pdf_to_png_pages(
+    raw: bytes,
+    max_pages: int = MAX_PDF_PAGES,
+    dpi: int = PDF_RENDER_DPI,
+) -> list[bytes]:
+    """Rasterise each PDF page to PNG bytes.
+
+    Vision endpoints do not accept raw PDF bytes through their image inputs, so
+    the demo's own mock documents (all PDFs) previously failed every extraction
+    call. Rendering here also means scanned PDFs work without an OCR step.
+    """
+    try:
+        import pymupdf
+    except ImportError as exc:
+        raise DocumentRenderError(
+            f"Reading PDFs requires the 'pymupdf' package, which is not installed. {PDF_HINT}"
+        ) from exc
+
+    try:
+        doc = pymupdf.open(stream=raw, filetype="pdf")
+    except Exception as exc:
+        raise DocumentRenderError(
+            "This file could not be opened as a PDF. It may be corrupt or not a real PDF."
+        ) from exc
+
+    try:
+        if getattr(doc, "needs_pass", False):
+            raise DocumentRenderError(
+                "This PDF is password-protected. Remove the password and upload again."
+            )
+        page_count = min(len(doc), max_pages)
+        if page_count == 0:
+            raise DocumentRenderError("This PDF contains no pages.")
+        pages = [doc[index].get_pixmap(dpi=dpi).tobytes("png") for index in range(page_count)]
+    except DocumentRenderError:
+        raise
+    except Exception as exc:
+        raise DocumentRenderError(
+            "The PDF opened but its pages could not be rendered to images."
+        ) from exc
+    finally:
+        doc.close()
+
+    return pages
+
+
+def prepare_document_images(raw: bytes) -> list[tuple[str, bytes]]:
+    """Return [(mime_type, image_bytes), ...] ready for a vision model.
+
+    PDFs are rasterised page by page; images pass through with their real MIME
+    type so the provider is never handed PNG-labelled PDF data.
+    """
+    if not raw:
+        raise DocumentRenderError("The uploaded file is empty.")
+
+    mime = sniff_mime(raw)
+    if mime == "application/pdf":
+        return [("image/png", page) for page in pdf_to_png_pages(raw)]
+    if mime in ("image/png", "image/jpeg"):
+        return [(mime, raw)]
+    raise DocumentRenderError(
+        "Unsupported file type. Upload a PDF, PNG, or JPG."
+    )
 
 
 def _parse_number(value: Any) -> Optional[float]:
@@ -131,76 +222,74 @@ def parse_extraction_response(raw: dict) -> ExtractionResult:
     )
 
 
-def _extract_openai(api_key: str, model: str, image_bytes: bytes, base_url: Optional[str] = None) -> str:
+def _extract_openai(api_key: str, model: str, images: list[tuple[str, bytes]], base_url: Optional[str] = None) -> str:
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    content = [{"type": "text", "text": EXTRACTION_PROMPT}]
+    for mime_type, image in images:
+        b64 = base64.b64encode(image).decode("utf-8")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{b64}",
+                    "detail": "high",
+                },
+            }
+        )
 
     response = client.chat.completions.create(
         model=model,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": EXTRACTION_PROMPT},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{b64}",
-                            "detail": "high",
-                        },
-                    },
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
         max_tokens=2000,
         temperature=0,
     )
     return response.choices[0].message.content.strip()
 
 
-def _extract_anthropic(api_key: str, model: str, image_bytes: bytes, base_url: Optional[str] = None) -> str:
+def _extract_anthropic(api_key: str, model: str, images: list[tuple[str, bytes]], base_url: Optional[str] = None) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    content = []
+    for mime_type, image in images:
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": base64.b64encode(image).decode("utf-8"),
+                },
+            }
+        )
+    content.append({"type": "text", "text": EXTRACTION_PROMPT})
 
     response = client.messages.create(
         model=model,
         max_tokens=2000,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": b64,
-                        },
-                    },
-                    {"type": "text", "text": EXTRACTION_PROMPT},
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
     )
     return response.content[0].text.strip()
 
 
-def _extract_google(api_key: str, model: str, image_bytes: bytes, base_url: Optional[str] = None) -> str:
+def _extract_google(api_key: str, model: str, images: list[tuple[str, bytes]], base_url: Optional[str] = None) -> str:
     import google.generativeai as genai
 
     genai.configure(api_key=api_key)
     model_instance = genai.GenerativeModel(model)
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    parts = [EXTRACTION_PROMPT]
+    for mime_type, image in images:
+        parts.append(
+            {"mime_type": mime_type, "data": base64.b64encode(image).decode("utf-8")}
+        )
 
     response = model_instance.generate_content(
-        [
-            EXTRACTION_PROMPT,
-            {"mime_type": "image/png", "data": b64},
-        ],
+        parts,
         generation_config=genai.GenerationConfig(
             max_output_tokens=2000,
             temperature=0,
@@ -209,20 +298,24 @@ def _extract_google(api_key: str, model: str, image_bytes: bytes, base_url: Opti
     return response.text.strip()
 
 
-def _extract_ollama(api_key: str, model: str, image_bytes: bytes, base_url: str = "http://localhost:11434") -> str:
+def _extract_ollama(api_key: str, model: str, images: list[tuple[str, bytes]], base_url: Optional[str] = None) -> str:
     import httpx
 
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    if not base_url:
+        raise ValueError("Ollama needs a base URL (default: http://localhost:11434)")
 
     response = httpx.post(
-        f"{base_url}/api/chat",
+        f"{base_url.rstrip('/')}/api/chat",
         json={
             "model": model,
             "messages": [
                 {
                     "role": "user",
                     "content": EXTRACTION_PROMPT,
-                    "images": [b64],
+                    "images": [
+                        base64.b64encode(image).decode("utf-8")
+                        for _, image in images
+                    ],
                 }
             ],
             "stream": False,
@@ -231,6 +324,7 @@ def _extract_ollama(api_key: str, model: str, image_bytes: bytes, base_url: str 
     )
     response.raise_for_status()
     return response.json()["message"]["content"].strip()
+
 
 
 EXTRACTORS = {
@@ -248,11 +342,17 @@ def extract_from_image(
     image_bytes: bytes,
     base_url: Optional[str] = None,
 ) -> ExtractionResult:
+    """Extract declaration fields from an uploaded PDF or image.
+
+    The parameter keeps its historical name; `image_bytes` may be a PDF, which
+    is rasterised before it reaches the provider.
+    """
     if provider not in EXTRACTORS:
         raise ValueError(f"Unknown provider: {provider}")
 
+    images = prepare_document_images(image_bytes)
     extractor = EXTRACTORS[provider]
-    raw_text = extractor(api_key, model, image_bytes, base_url)
+    raw_text = extractor(api_key, model, images, base_url)
 
     raw_text = re.sub(r"```json\n?", "", raw_text)
     raw_text = re.sub(r"\n?```", "", raw_text)

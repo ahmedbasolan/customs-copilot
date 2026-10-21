@@ -1,9 +1,9 @@
 # Runtime dependencies.
-# pymupdf is required for PDF auto-detect: without it every PDF silently
-# classifies as "unknown". detection.py now raises PdfTextUnavailable with an
-# actionable message and the Streamlit UI shows a warning, but the package
-# still has to be installed. Pinned to a minor range so a breaking upstream
-# release cannot reintroduce the silent failure.
+# pymupdf is required twice: for PDF auto-detect (text extraction) and for
+# extraction itself (rendering PDF pages to PNG, since vision endpoints do not
+# accept raw PDF bytes). Without it every PDF silently classifies as "unknown"
+# and every PDF extraction fails with an actionable message. Pinned to a minor
+# range so a breaking upstream release cannot reintroduce the silent failure.
 streamlit>=1.30,<2
 openai>=1.12
 anthropic>=0.34
