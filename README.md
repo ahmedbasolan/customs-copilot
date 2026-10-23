@@ -17,16 +17,16 @@ A Streamlit app that pre-fills Dubai customs declarations from shipping document
 streamlit run app.py
 ```
 
-Open [http://localhost:8501](http://localhost:8501), enter your OpenAI API key in the sidebar, and upload a shipping document.
+Open [http://localhost:8501](http://localhost:8501), pick a provider and enter its API key in the sidebar, and upload a shipping document.
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | UI | Streamlit |
-| Extraction | OpenAI GPT-4o (vision) — single API call does OCR + structuring |
+| Extraction | Vision LLM — GPT-4o by default; Claude, Gemini, or a local Ollama model (llava) also supported. A single call does OCR + structuring |
 | Validation | Python rules engine (block + warn severity) |
-| Document parsing | Python `ast` module for function/class boundary detection |
+| Document detection | PyMuPDF text extraction + keyword scoring to identify BL / Invoice / Packing List |
 | Deployment | Streamlit Cloud (no containers needed) |
 
 ## Getting Started
@@ -44,7 +44,7 @@ Open [http://localhost:8501](http://localhost:8501), enter your OpenAI API key i
    ```bash
    streamlit run app.py
    ```
-4. Enter your OpenAI API key in the sidebar
+4. Pick a provider (OpenAI, Anthropic, Google, or Ollama) and enter its API key in the sidebar
 
 ## Validation Rules
 
@@ -64,13 +64,14 @@ Open [http://localhost:8501](http://localhost:8501), enter your OpenAI API key i
 
 ```
 customs-copilot/
-├── app.py              # Streamlit UI + Gemini generation
+├── app.py              # Streamlit UI + provider settings
 ├── detection.py        # Document type auto-detection
-├── extraction.py       # Prompt construction + response parsing
+├── extraction.py       # Prompt construction, provider calls, response parsing
 ├── validation.py       # Block/warn validation rules
+├── generate_mock_docs.py  # Builds the sample PDFs in mock_docs/
 ├── mock_docs/          # Sample shipping documents for demos
-├── docs/               # Agent instructions and ADRs
-├── tests/              # Unit + integration tests
+├── docs/adr/           # Architecture decision records
+├── test_*.py           # Unit + user-journey tests (run with `pytest`)
 └── requirements.txt
 ```
 
