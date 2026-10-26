@@ -1,5 +1,9 @@
 # Customs Document Pre-Fill & Validation Copilot
 
+> The original 3-day plan, kept as written. Not all of it was built as planned: the app
+> was never deployed to Streamlit Cloud, and it supports four providers rather than
+> GPT-4o only. [README.md](README.md) and [CASE_STUDY.md](CASE_STUDY.md) describe what exists.
+
 ## Problem Statement
 
 Freight coordinators manually read bills of lading, invoices, and packing lists, then re-type data into Dubai Trade / Mirsal. Typos and missing fields cause rejections and delays. The process is slow, error-prone, and requires deep domain knowledge to catch mistakes before submission.
