@@ -27,7 +27,7 @@ Open [http://localhost:8501](http://localhost:8501), pick a provider and enter i
 | Extraction | Vision LLM — GPT-4o by default; Claude, Gemini, or a local Ollama model (llava) also supported. A single call does OCR + structuring |
 | Validation | Python rules engine (block + warn severity) |
 | Document detection | PyMuPDF text extraction + keyword scoring to identify BL / Invoice / Packing List |
-| Deployment | Streamlit Cloud (no containers needed) |
+| Deployment | Runs locally with `streamlit run`; no hosted demo |
 
 ## Getting Started
 
@@ -50,12 +50,12 @@ Open [http://localhost:8501](http://localhost:8501), pick a provider and enter i
 
 | Rule | Severity | What It Checks |
 |------|----------|---------------|
-| HS Code missing/malformed | Block | Must be 6-10 digits, optionally dotted after 4th |
+| HS Code missing/malformed | Block | 6-10 digits once dots, spaces and hyphens are removed |
 | Invoice value ≤ 0 | Block | Must be positive |
-| TRN missing | Block | Required on all customs declarations |
+| TRN missing or invalid | Block | Must be 15 digits |
 | Container number format | Block | 4 uppercase + 7 digits |
 | Gross < Net weight | Warn | Data entry error |
-| Country of origin not allowed | Warn | Not in allowed list for Dubai imports |
+| Country of origin not in list | Warn | Outside the app's hardcoded list of 65 common trading partners (a sanity check, not an official import rule) |
 | Currency not AED | Warn | Conversion may be needed |
 
 **Block** rules prevent submission. **Warn** rules flag issues but allow override.
@@ -71,14 +71,16 @@ customs-copilot/
 ├── generate_mock_docs.py  # Builds the sample PDFs in mock_docs/
 ├── mock_docs/          # Sample shipping documents for demos
 ├── docs/adr/           # Architecture decision records
-├── test_*.py           # Unit + user-journey tests (run with `pytest`)
+├── test_*.py           # 87 unit tests (run with `pytest`)
 └── requirements.txt
 ```
 
 ## Limitations
 
 - No real Dubai Trade / Mirsal 2 API integration (mock form only)
-- No OCR preprocessing — relies entirely on GPT-4o vision
+- Extraction accuracy has not been measured: the tests cover rendering, request payloads, parsing and validation, not whether a model reads a document correctly. See [CASE_STUDY.md](CASE_STUDY.md)
+- Tested only on three synthetic documents (`mock_docs/`)
+- No OCR preprocessing: relies on a vision LLM to read documents
 - No persistence (session-only)
 - Single-user demo, not production-grade
 

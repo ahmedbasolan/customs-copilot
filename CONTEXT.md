@@ -10,7 +10,7 @@ _Avoid_: B/L, shipping bill
 
 **Packing List**:
 A document listing the contents, weight, and packaging details of each shipment item. Source for goods description, package count, gross/net weight.
-_Aavoid_: packing slip, contents list
+_Avoid_: packing slip, contents list
 
 **Invoice**:
 A commercial document issued by the seller to the buyer stating the value of goods. Source for invoice value, currency, and HS codes.
@@ -26,7 +26,7 @@ _Avoid_: sender, exporter
 
 **HS Code (Harmonized System Code)**:
 A 6-10 digit numeric classification code for traded goods. Required on all customs declarations. Format: optionally dotted after 4th digit (e.g., `9403.20`).
-_Aavoid_: tariff code, commodity code
+_Avoid_: tariff code, commodity code
 
 **TRN (Tax Registration Number)**:
 A 15-digit unique identifier for VAT-registered entities in UAE/GCC. Required on customs declarations for the consignee.
@@ -45,11 +45,11 @@ Weight of goods only, excluding packaging. Must be ≤ gross weight.
 _Avoid_: goods weight
 
 **Country of Origin**:
-The country where the goods were manufactured or produced. Must be from an allowed list for Dubai imports.
+The country where the goods were manufactured or produced. The app warns when it is outside its hardcoded list of common trading partners; this is a sanity check, not an official rule.
 _Avoid_: origin country, made in
 
 **Port of Loading (POL)**:
-The port where goods are loaded onto the vessel. IATA/unlocode format (e.g., `CNSHA` for Shanghai).
+The port where goods are loaded onto the vessel. UN/LOCODE format (e.g., `CNSHA` for Shanghai).
 _Avoid_: departure port, origin port
 
 **Port of Discharge (POD)**:
@@ -58,7 +58,7 @@ _Avoid_: destination port, arrival port
 
 **Declaration Type**:
 The category of customs declaration. For this copilot: always "Import".
-_Aavoid_: decl type, entry type
+_Avoid_: decl type, entry type
 
 **Validation Rule**:
 A check applied to extracted fields before submission. Rules either **block** (must fix) or **warn** (should fix). Block rules prevent submission; warn rules flag issues but allow override.

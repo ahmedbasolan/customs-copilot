@@ -1,8 +1,8 @@
 import json
 import streamlit as st
 from extraction import extract_from_image, ExtractionResult, PROVIDERS
-from detection import detect_document_type
-from validation import validate_all, ValidationResult
+from detection import detect_document_type_safe, pdf_support_available
+from validation import validate_all, ValidationResult, ordered_unique
 
 st.set_page_config(
     page_title="Customs Copilot",
@@ -178,6 +178,7 @@ with st.sidebar:
     )
 
     provider_info = PROVIDERS[provider]
+    requires_api_key = provider_info.get("needs_api_key", True)
 
     if "custom_model" not in st.session_state:
         st.session_state.custom_model = provider_info["default_model"]
@@ -215,7 +216,10 @@ with st.sidebar:
         key="api_key",
         help="Your key is session-only, never stored or transmitted elsewhere.",
         placeholder="sk-..." if provider == "openai" else "Enter your API key",
+        disabled=not requires_api_key,
     )
+    if not requires_api_key:
+        st.caption("Not required — local models run on your own machine.")
 
     st.markdown("---")
     st.markdown(f"""
@@ -233,7 +237,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 current_step = 1
-if api_key:
+if api_key or not requires_api_key:
     current_step = 2
 if st.session_state.get("extracted") and len(st.session_state["extracted"]) > 0:
     current_step = 3
@@ -263,7 +267,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-if not api_key:
+if requires_api_key and not api_key:
     st.markdown("""
     <div style="background:white; border:1px solid #e2e8f0; border-radius:16px; padding:3rem; text-align:center; margin:1rem 0;">
         <div style="font-size:4rem; margin-bottom:1rem;">🔑</div>
@@ -301,8 +305,23 @@ DOC_TYPE_ICONS = {"bill_of_lading": "🚢", "invoice": "💰", "packing_list": "
 
 if "extracted" not in st.session_state:
     st.session_state.extracted = {}
+if "extract_errors" not in st.session_state:
+    st.session_state.extract_errors = {}
 if "doc_types" not in st.session_state:
     st.session_state.doc_types = {}
+if "doc_warnings" not in st.session_state:
+    st.session_state.doc_warnings = {}
+
+# Surface a broken PDF dependency once, instead of letting every PDF silently
+# auto-detect as "unknown" with no explanation.
+_pdf_ok, _pdf_msg = pdf_support_available()
+if not _pdf_ok and any(
+    (f.name or "").lower().endswith(".pdf") for f in uploaded_files
+):
+    st.warning(
+        f"PDF auto-detect is unavailable — {_pdf_msg} "
+        "You can still upload PDFs and set the document type manually."
+    )
 
 st.markdown(f'<div class="section-header">📄 Uploaded Documents <span class="count">{len(uploaded_files)}</span></div>', unsafe_allow_html=True)
 
@@ -312,8 +331,13 @@ for i, file in enumerate(uploaded_files):
     if file_key not in st.session_state.doc_types:
         raw_bytes = file.read()
         file.seek(0)
-        detected_type, _ = detect_document_type(raw_bytes)
+        detected_type, _, warning = detect_document_type_safe(raw_bytes)
         st.session_state.doc_types[file_key] = detected_type
+        st.session_state.doc_warnings[file_key] = warning
+
+    warning = st.session_state.doc_warnings.get(file_key)
+    if warning and st.session_state.doc_types[file_key] == "unknown":
+        st.caption(f"⚠️ {warning}", help=file.name)
 
     icon = DOC_TYPE_ICONS.get(st.session_state.doc_types[file_key], "📄")
     col1, col2 = st.columns([5, 2])
@@ -348,6 +372,7 @@ with col_btn:
 
 if extract_clicked:
     st.session_state.extracted = {}
+    st.session_state.extract_errors = {}
     status_text = st.empty()
     progress = st.progress(0)
     results_area = st.container()
@@ -372,11 +397,29 @@ if extract_clicked:
             }
             results_area.success(f"✓ `{file.name}` — extracted successfully")
         except Exception as e:
+            st.session_state.extract_errors[file_key] = (file.name, str(e))
             results_area.error(f"✗ `{file.name}` — {e}")
 
     progress.progress(1.0)
     status_text.markdown("**Done!** All documents processed.")
     st.rerun()
+
+# st.rerun() at the end of extraction wipes anything written to the page during
+# the loop, so failures are reloaded from session state instead of vanishing.
+_current_keys = {f"{file.name}_{i}" for i, file in enumerate(uploaded_files)}
+_visible_errors = {
+    key: value
+    for key, value in st.session_state.extract_errors.items()
+    if key in _current_keys
+}
+if _visible_errors:
+    st.markdown(
+        f'<div class="section-header">⚠️ Extraction Failures '
+        f'<span class="count">{len(_visible_errors)}</span></div>',
+        unsafe_allow_html=True,
+    )
+    for _failed_name, _failed_message in _visible_errors.values():
+        st.error(f"✗ `{_failed_name}` — {_failed_message}")
 
 if st.session_state.extracted:
     merged = ExtractionResult()
@@ -386,12 +429,12 @@ if st.session_state.extracted:
         if not merged.consignee_trn and r.consignee_trn: merged.consignee_trn = r.consignee_trn
         if not merged.shipper_name and r.shipper_name: merged.shipper_name = r.shipper_name
         if not merged.shipper_country and r.shipper_country: merged.shipper_country = r.shipper_country
-        if r.container_numbers: merged.container_numbers = list(set(merged.container_numbers + r.container_numbers))
+        if r.container_numbers: merged.container_numbers = ordered_unique(merged.container_numbers + r.container_numbers)
         if merged.gross_weight is None and r.gross_weight is not None: merged.gross_weight = r.gross_weight
         if merged.net_weight is None and r.net_weight is not None: merged.net_weight = r.net_weight
         if merged.invoice_value is None and r.invoice_value is not None: merged.invoice_value = r.invoice_value
         if not merged.invoice_currency and r.invoice_currency: merged.invoice_currency = r.invoice_currency
-        if r.hs_codes: merged.hs_codes = list(set(merged.hs_codes + r.hs_codes))
+        if r.hs_codes: merged.hs_codes = ordered_unique(merged.hs_codes + r.hs_codes)
         if not merged.country_of_origin and r.country_of_origin: merged.country_of_origin = r.country_of_origin
         if not merged.port_of_loading and r.port_of_loading: merged.port_of_loading = r.port_of_loading
         if not merged.port_of_discharge and r.port_of_discharge: merged.port_of_discharge = r.port_of_discharge
@@ -400,10 +443,10 @@ if st.session_state.extracted:
         if not merged.marks_and_numbers and r.marks_and_numbers: merged.marks_and_numbers = r.marks_and_numbers
 
     validation_data = {
-        "hs_code": merged.hs_codes[0] if merged.hs_codes else None,
+        "hs_codes": merged.hs_codes,
         "invoice_value": merged.invoice_value,
         "trn": merged.consignee_trn,
-        "container_number": merged.container_numbers[0] if merged.container_numbers else None,
+        "container_numbers": merged.container_numbers,
         "gross_weight": merged.gross_weight,
         "net_weight": merged.net_weight,
         "country_of_origin": merged.country_of_origin,
