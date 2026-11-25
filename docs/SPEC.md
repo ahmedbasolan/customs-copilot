@@ -2,7 +2,7 @@
 
 > The original 3-day plan, kept as written. Not all of it was built as planned: the app
 > was never deployed to Streamlit Cloud, and it supports four providers rather than
-> GPT-4o only. [README.md](README.md) and [CASE_STUDY.md](CASE_STUDY.md) describe what exists.
+> GPT-4o only. [README.md](../README.md) and [CASE_STUDY.md](../CASE_STUDY.md) describe what exists.
 
 ## Problem Statement
 

@@ -1,5 +1,7 @@
 # Customs Copilot
 
+[![CI](https://github.com/ahmedbasolan/customs-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/ahmedbasolan/customs-copilot/actions/workflows/ci.yml)
+
 A Streamlit app that pre-fills Dubai customs declarations from shipping documents (Bill of Lading, Invoice, Packing List) using GPT-4o vision — then validates every field before submission.
 
 ## What It Does
@@ -46,6 +48,15 @@ Open [http://localhost:8501](http://localhost:8501), pick a provider and enter i
    ```
 4. Pick a provider (OpenAI, Anthropic, Google, or Ollama) and enter its API key in the sidebar
 
+## Tests
+
+```bash
+pip install pytest
+pytest
+```
+
+No API key needed: the tests cover rendering, request payloads, response parsing and validation. CI runs them on every push and pull request.
+
 ## Validation Rules
 
 | Rule | Severity | What It Checks |
@@ -70,7 +81,10 @@ customs-copilot/
 ├── validation.py       # Block/warn validation rules
 ├── generate_mock_docs.py  # Builds the sample PDFs in mock_docs/
 ├── mock_docs/          # Sample shipping documents for demos
-├── docs/adr/           # Architecture decision records
+├── docs/
+│   ├── adr/            # Architecture decision records
+│   ├── CONTEXT.md      # Domain glossary (BL, HS code, TRN, …)
+│   └── SPEC.md         # The original 3-day plan, kept as written
 ├── test_*.py           # 87 unit tests (run with `pytest`)
 └── requirements.txt
 ```
